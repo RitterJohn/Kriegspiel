@@ -4,7 +4,7 @@ DROP TABLE IF EXISTS artillery CASCADE;
 
 
 CREATE TABLE "countries" (
-	"country_id" serial NOT NULL,
+	"country_id" integer NOT NULL,
 	"country_name" TEXT NOT NULL,
 	"r" integer NOT NULL,
 	"g" integer NOT NULL,
@@ -15,7 +15,7 @@ CREATE TABLE "countries" (
 
 
 CREATE TABLE "infantry" (
-	"infantry_id" serial NOT NULL,
+	"infantry_id" integer NOT NULL,
 	"infantry_name" TEXT NOT NULL,
 	"country_id" integer NOT NULL,
 	"count" integer NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE "infantry" (
 
 
 CREATE TABLE "artillery" (
-	"artillery_id" serial NOT NULL,
+	"artillery_id" integer NOT NULL,
 	"artillery_name" TEXT NOT NULL,
 	"country_id" integer NOT NULL,
 	"core_distance" integer NOT NULL,
