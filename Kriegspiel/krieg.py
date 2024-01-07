@@ -3,9 +3,12 @@ import pygame
 from pygame.locals import *
 import numpy as np
 
+from db_config import conn
+
+cur = conn.cursor()
+conn.autocommit = False
+
 # Цвета
-C1 = (0, 250, 50)
-C2 = (0, 250, 250)
 White = (250, 250, 250)
 BLACK = (0, 0, 0)
 Gray = (200, 200, 200)
@@ -23,7 +26,7 @@ clock = pygame.time.Clock()
 sound0 = pygame.mixer.Sound('resources\\0.ogg')
 sound0.set_volume(0.2)
 sound02 = pygame.mixer.Sound('resources\\0.ogg')
-sound02.set_volume(0.1)
+sound02.set_volume(0.02)
 
 go_check = False # для проверки движения
 player1 = True # для смены хода
@@ -35,7 +38,7 @@ dict_1 = {} # для первого игрока
 dict_2 = {} # для второго игрока
 
 class Unit(pygame.sprite.Sprite):
-    def __init__(self, x, y, color):
+    def __init__(self, x, y, color, distance, way, error, guard, type):
         super().__init__()
         self.image = pygame.Surface((2, 2))
         self.image.fill(color)
@@ -43,29 +46,32 @@ class Unit(pygame.sprite.Sprite):
         self.rect = self.image.get_rect()
         self.rect.bottom = y
         self.rect.left = x
-        self.center = (x, y)
         self.run_speed = (0, -1)
-        self.direction = 0
-        self.dist = 0
-        self.max_dist = 100
+        self.way = 0
+        self.max_way = way
         self.angle = 0
         self.fire = False
         self.time = random.randint(0, 200)
         self.comand = 0
         self.x_d = x
         self.y_d = y
+        self.guard = guard
+        self.error = error
+        self.fire_distance = distance
+        self.type = type
 
     def shot(self):
-        bullet = Bullet(self.rect.left + 10 * np.sign(np.sin(self.angle / 180 * np.pi)), self.rect.top - 10 * np.sign(np.cos(self.angle / 180 * np.pi)), 200, 10, self.angle)
+        bullet = Bullet(self.rect.left + 10 * np.sign(np.sin(self.angle / 180 * np.pi)), self.rect.top - 10 * np.sign(np.cos(self.angle / 180 * np.pi)), self.fire_distance, self.error, self.angle)
         all_sprites.add(bullet)
         bullets.add(bullet)
         smoke_add(self.rect.left, self.rect.bottom, 1, 4, 4)
+        sound02.play(maxtime=700)
 
     def go(self):
         self.x_d += np.sin(self.angle / 180 * np.pi)
         self.y_d -= np.cos(self.angle / 180 * np.pi)
         self.rect.center = (self.x_d, self.y_d)
-        self.dist += abs(np.sign(np.sin(self.angle / 180 * np.pi) * np.cos(self.angle / 180 * np.pi)) * 0.41) + 1
+        self.way += abs(np.sign(np.sin(self.angle / 180 * np.pi) * np.cos(self.angle / 180 * np.pi)) * 0.41) + 1
 
     def update(self):
         if (self.fire == True):
@@ -83,7 +89,7 @@ class Bullet(pygame.sprite.Sprite):
         self.rect.bottom = y
         self.rect.left = x
         self.speed = (1, 1)
-        self.max = random.randint(50, dist)
+        self.max = random.randint(dist - 110, dist)
         self.angle = np.pi * (random.randint(-alpha, alpha)) / 180 + np.pi * (dir) / 180
         self.way = 0
         self.dist = 0
@@ -99,7 +105,7 @@ class Bullet(pygame.sprite.Sprite):
             self.kill()
 
 class Core(pygame.sprite.Sprite):
-    def __init__(self, x, y, xz, yz):
+    def __init__(self, x, y, xz, yz, distance, error):
         super().__init__()
         self.image = pygame.Surface((2, 2))
         self.image.fill(White)
@@ -107,8 +113,8 @@ class Core(pygame.sprite.Sprite):
         self.rect.bottom = y
         self.rect.left = x
         self.speed = (0, -1)
-        self.max = random.randint(300, 800)
-        self.angle = np.pi * random.randint(-5, 5) / 180
+        self.max = random.randint(300, distance)
+        self.angle = np.pi * random.randint(-error, error) / 180
         self.way = 0
         self.dist = 0
         self.xz = xz
@@ -156,8 +162,8 @@ class Smoke(pygame.sprite.Sprite):
         if self.way >= self.max:
             self.kill()
 
-class Canon(pygame.sprite.Sprite):
-    def __init__(self, x, y, image):
+class Cannon(pygame.sprite.Sprite):
+    def __init__(self, x, y, image, core_distance, core_error, grapeshot_count, grapeshot_distance, grapeshot_error):
         super().__init__()
         self.image = pygame.image.load(image)
         self.rect = self.image.get_rect()
@@ -172,11 +178,16 @@ class Canon(pygame.sprite.Sprite):
         self.time = random.randint(0, 500)
         self.comand = 0
         self.down = False
+        self.core_distance = core_distance
+        self.core_error = core_error
+        self.grapeshot_count = grapeshot_count
+        self.grapeshot_distance = grapeshot_distance
+        self.grapeshot_error = grapeshot_error
 
     def core_shot(self, zx, zy):
         a = (zx - self.rect.left) / (-zy + self.rect.top)
         if (abs(a) < 0.43):
-            core1 = Core(self.rect.left + 3, self.rect.top - 2, zx, zy)
+            core1 = Core(self.rect.left + 3, self.rect.top - 2, zx, zy, self.core_distance, self.core_error)
             sound0.play(maxtime=2000)
             all_sprites.add(core1)
             cores.add(core1)
@@ -213,8 +224,8 @@ class Canon(pygame.sprite.Sprite):
                 self.grapeshot_fire = False
 
     def grapeshot(self):
-        for i in range(50):
-            bul = Bullet(self.rect.left + 3, random.randint(self.rect.top - 4, self.rect.top), 250, 8, 0)
+        for i in range(self.grapeshot_count):
+            bul = Bullet(self.rect.left + 3, random.randint(self.rect.top - 4, self.rect.top), self.grapeshot_distance, self.grapeshot_error, 0)
             all_sprites.add(bul)
             bullets.add(bul)
         sound0.play(maxtime=2000)
@@ -248,24 +259,31 @@ def new_position(a):
 # функция для добавления расчёта к орудию
 def artillery(x, y, group, C):
 
-    un1 = Unit(x + 13, y + 8, C)
-    un2 = Unit(x + 11, y + 11, C)
-    un3 = Unit(x + 12, y - 2, C)
-    un4 = Unit(x - 5, y + 1, C)
-    un5 = Unit(x - 4, y + 14, C)
-    un6 = Unit(x - 1, y + 24, C)
+    un1 = Unit(x + 13, y + 8, C, 0, 0, 0, False, '')
+    un2 = Unit(x + 11, y + 11, C, 0, 0, 0, False, '')
+    un3 = Unit(x + 12, y - 2, C, 0, 0, 0, False, '')
+    un4 = Unit(x - 5, y + 1, C, 0, 0, 0, False, '')
+    un5 = Unit(x - 4, y + 14, C, 0, 0, 0, False, '')
+    un6 = Unit(x - 1, y + 24, C, 0, 0, 0, False, '')
     units.add(un1, un2, un3, un4, un5, un6)
     all_sprites.add(un1, un2, un3, un4, un5, un6)
     group.add(un1, un2, un3, un4, un5, un6)
 
 # функция для создания отряда пехоты
-def add_unit(a, x, y, C):
+def add_unit(a, x, y, C, type, player):
+    cur.execute("""select count, distance, way, error, guard from infantry where country_id = (%s) and infantry_name = (%s)""", (player, type))
+    count, distance, way, error, guard = cur.fetchall()[0]
     units_list.append(a)
-    for i in range(90):
-        un = Unit(x + 4 * ((i) % 30), y + 4 * (i // 30 + 1), C)
+    for i in range(count):
+        un = Unit(x + 4 * ((i) % 30), y + 4 * (i // 30 + 1), C, distance, way, error, guard, type)
         all_sprites.add(un)
         a.add(un)
         units.add(un)
+
+def add_cannon(a, a_player):
+    all_sprites.add(a)
+    cannons.add(a)
+    a_player.add(a)
 
 # функция для правого поворота отряда
 def povorot(a):
@@ -296,6 +314,26 @@ def left_povorot(a):
         u.angle = (u.angle - 45) % 360
         i += 1
 
+# Выбор стран игроками
+cur.execute("""SElECT country_id, country_name 
+                FROM countries""")
+query_res = cur.fetchall()
+for text in query_res:
+    print(f'{text[0]} - {text[1]}')
+
+print('Страна первого игрока (номер): ')
+p1 = int(input())
+p1_country = query_res[p1 - 1][1]
+print('Страна второго игрока (номер): ')
+p2 = int(input())
+p2_country = query_res[p2 - 1][1]
+
+
+cur.execute("""SELECT r, g, b from countries where country_id = (%s)""", (p1,))
+C1 = cur.fetchall()[0]
+cur.execute("""SELECT r, g, b from countries where country_id = (%s)""", (p2,))
+C2 = cur.fetchall()[0]
+
 running = True
 
 units_list = []
@@ -312,26 +350,26 @@ units5 = pygame.sprite.Group()
 units6 = pygame.sprite.Group()
 batery1 = pygame.sprite.Group()
 batery2 = pygame.sprite.Group()
-canons1 = pygame.sprite.Group()
-canons2 = pygame.sprite.Group()
+cannons1 = pygame.sprite.Group()
+cannons2 = pygame.sprite.Group()
 bullets = pygame.sprite.Group()
 cores = pygame.sprite.Group()
-canons = pygame.sprite.Group()
+cannons = pygame.sprite.Group()
 
 # создание отрядов пехоты первого игрока
-add_unit(units1, 450, 600, C1)
+add_unit(units1, 450, 600, C1, 'live_guard', p1)
 dict_1[0] = units1
-add_unit(units2, 700, 600, C1)
+add_unit(units2, 700, 600, C1, 'line_infantry', p1)
 dict_1[1] = units2
-add_unit(units3, 850, 600, C1)
+add_unit(units3, 850, 600, C1, 'light_infantry', p1)
 dict_1[2] = units3
 
 # создание отрядов пехоты второго игрока
-add_unit(units4, 550, 600, C2)
+add_unit(units4, 550, 600, C2, 'line_infantry', p2)
 dict_2[0] = units4
-add_unit(units5, 800, 600, C2)
+add_unit(units5, 800, 600, C2, 'line_infantry', p2)
 dict_2[1] = units5
-add_unit(units6, 950, 600, C2)
+add_unit(units6, 950, 600, C2, 'line_infantry', p2)
 dict_2[2] = units6
 
 for a in dict_2.values():
@@ -343,34 +381,28 @@ selected_unit = units1
 dict_0 = dict_1
 dict_n = dict_2
 
-canon1 = Canon(600, 600, 'resources/canon.png')
-all_sprites.add(canon1)
-canons.add(canon1)
-canons1.add(canon1)
-canon2 = Canon(635, 600, 'resources/canon.png')
-all_sprites.add(canon2)
-canons.add(canon2)
-canons1.add(canon2)
-canon3 = Canon(670, 600, 'resources/canon.png')
-all_sprites.add(canon3)
-canons.add(canon3)
-canons1.add(canon3)
+cur.execute("""SELECT core_distance, core_error, grapeshot_count, grapeshot_distance, grapeshot_error from artillery where country_id = (%s)""", (p1,))
+c_dist, c_er, g_co, g_dist, g_er = cur.fetchall()[0]
 
-canon4 = Canon(750, 185, 'resources/canon2.png')
-all_sprites.add(canon4)
-canons.add(canon4)
-canons2.add(canon4)
-canon5 = Canon(785, 185, 'resources/canon2.png')
-all_sprites.add(canon5)
-canons.add(canon5)
-canons2.add(canon5)
-canon6 = Canon(820, 185, 'resources/canon2.png')
-all_sprites.add(canon6)
-canons.add(canon6)
-canons2.add(canon6)
-canon4.down = True
-canon5.down = True
-canon6.down = True
+cannon1 = Cannon(600, 600, 'resources/canon.png', c_dist, c_er, g_co, g_dist, g_er)
+add_cannon(cannon1, cannons1)
+cannon2 = Cannon(635, 600, 'resources/canon.png', c_dist, c_er, g_co, g_dist, g_er)
+add_cannon(cannon2, cannons1)
+cannon3 = Cannon(670, 600, 'resources/canon.png', c_dist, c_er, g_co, g_dist, g_er)
+add_cannon(cannon3, cannons1)
+
+cur.execute("""SELECT core_distance, core_error, grapeshot_count, grapeshot_distance, grapeshot_error from artillery where country_id = (%s)""", (p2,))
+c_dist, c_er, g_co, g_dist, g_er = cur.fetchall()[0]
+
+cannon4 = Cannon(750, 185, 'resources/canon2.png', c_dist, c_er, g_co, g_dist, g_er)
+add_cannon(cannon4, cannons2)
+cannon5 = Cannon(785, 185, 'resources/canon2.png', c_dist, c_er, g_co, g_dist, g_er)
+add_cannon(cannon5, cannons2)
+cannon6 = Cannon(820, 185, 'resources/canon2.png', c_dist, c_er, g_co, g_dist, g_er)
+add_cannon(cannon6, cannons2)
+cannon4.down = True
+cannon5.down = True
+cannon6.down = True
 
 artillery(600, 600, batery1, C1)
 artillery(635, 600, batery1, C1)
@@ -380,7 +412,7 @@ artillery(763, 600, batery2, C2)
 artillery(728, 600, batery2, C2)
 artillery(693, 600, batery2, C2)
 
-selected_canons = canons1
+selected_canons = cannons1
 
 c_count = 0
 for canon in selected_canons:
@@ -393,9 +425,11 @@ for unit in batery2:
 
 score_font = pygame.font.SysFont('consolas', 14)
 score_text = []
+number_text = []
 action_text = score_font.render(str(act_list), True, (White))
-for unit in units_list:
+for unit in list(dict_0.values()):
     score_text.append(score_font.render(f'{len(unit.sprites())}', True, unit.sprites()[0].color))
+    number_text.append(score_font.render(f'{list(dict_0.keys())[list(dict_0.values()).index(unit)]}', True, unit.sprites()[0].color))
 
 while running:
 
@@ -423,7 +457,7 @@ while running:
                     sprite.rect.bottom = size[1] - sprite.rect.bottom
                 for unit in dict_n.values():
                     new_position(unit)
-                for canon in canons:
+                for canon in cannons:
                     if canon.down == False:
                         canon.image = pygame.image.load('resources/canon2.png')
                         canon.down = True
@@ -436,17 +470,17 @@ while running:
                     dict_0 = dict_2
                     dict_n = dict_1
                     selected_unit = units4
-                    selected_canons = canons2
+                    selected_canons = cannons2
                     player1 = False
                 else:
                     dict_0 = dict_1
                     dict_n = dict_2
                     selected_unit = units1
-                    selected_canons = canons1
+                    selected_canons = cannons1
                     player1 = True
                 for a in dict_0.values():
                     for u in a:
-                        u.dist = 0
+                        u.way = 0
                 act_list = [0, 0, 0, 0]
                 line_list = []
                 for canon in selected_canons:
@@ -461,11 +495,15 @@ while running:
             elif event.key == K_4 and act_list[3] == 0:
                 canon_select = True
             # Выстрел отряда пехоты
-            elif event.key == K_f and act_list[k] == 0:
-                sound02.play(maxtime=2000)
+            elif event.key == K_f and act_list[k] == 0 and canon_select == False:
                 j = 0
                 for u in selected_unit:
-                    if random.randint(0, 100) >= 15 and j < 60:
+                    if u.guard == True:
+                        u.time = random.randint(0, 50)
+                        u.fire = True
+                        u.comand = pygame.time.get_ticks() + 800 * (j // 30)
+                        j += 1
+                    elif random.randint(0, 100) >= 15 and j < 60:
                         u.fire = True
                         u.comand = pygame.time.get_ticks()
                         j += 1
@@ -477,27 +515,27 @@ while running:
                     canon.grapeshot_fire = True
                 canon_select = False
                 act_list[3] = 1
-            elif event.key == K_w and act_list[k] != 1:
+            elif event.key == K_w and act_list[k] != 1 and canon_select == False:
                 go_check = True
-            elif event.key == K_e and act_list[k] != 1:
+            elif event.key == K_e and act_list[k] != 1 and canon_select == False:
                 i_un = 0
                 for u in selected_unit:
-                    if u.dist <= 75 and i_un == 0:
+                    if u.way <= 75 and i_un == 0:
                         povorot(selected_unit)
                         act_list[k] = 0.5
-                        u.dist += 25
-                    elif u.dist <= 75:
-                        u.dist += 25
+                        u.way += 25
+                    elif u.way <= 75:
+                        u.way += 25
                     i_un += 1
-            elif event.key == K_q:
+            elif event.key == K_q and canon_select == False:
                 i_un = 0
                 for u in selected_unit:
-                    if u.dist <= 75 and i_un == 0:
+                    if u.way <= 75 and i_un == 0:
                         left_povorot(selected_unit)
                         act_list[k] = 0.5
-                        u.dist += 25
-                    elif u.dist <= 75:
-                        u.dist += 25
+                        u.way += 25
+                    elif u.way <= 75:
+                        u.way += 25
                     i_un += 1
         elif event.type == KEYUP:
             if event.key == K_w:
@@ -508,7 +546,7 @@ while running:
     if go_check == True:
         act_list[k] = 0.5
         for u in selected_unit:
-            if (u.dist < u.max_dist):
+            if (u.way < u.max_way):
                 u.x_d, u.y_d = u.rect.center
                 u.go()
             else:
@@ -518,11 +556,12 @@ while running:
     # Проверка столкновений:
     pygame.sprite.groupcollide(units, bullets, True, True)
     pygame.sprite.groupcollide(units, cores, True, False)
-    pygame.sprite.groupcollide(canons, cores, True, False)
+    pygame.sprite.groupcollide(cannons, cores, True, False)
 
-    for i in range(len(units_list)):
-        if (len(units_list[i].sprites())) > 0:
-            score_text[i] = score_font.render(f'{len(units_list[i].sprites())}', True, units_list[i].sprites()[0].color)
+    for i in range(len(dict_0.values())):
+        if (len(list(dict_0.values())[i].sprites())) > 0:
+            score_text[i] = (score_font.render(f'{len(list(dict_0.values())[i].sprites())}, {list(dict_0.values())[i].sprites()[0].type}', True, list(dict_0.values())[i].sprites()[0].color))
+            number_text[i] = (score_font.render(f'{i + 1}', True, list(dict_0.values())[i].sprites()[0].color))
 
     for group in units_list:
         if len(group) < 20:
@@ -538,10 +577,10 @@ while running:
 
     if (p2_count < 20):
         running = False
-        print('Россия победила!')
+        print(f'{p1_country} has won this battle!')
     if (p1_count < 20):
         running = False
-        print('Франция победила!')
+        print(f'{p2_country} has won this battle!')
 
     screen.fill(BLACK)
     if (canon_select == True):
@@ -549,9 +588,10 @@ while running:
             pygame.draw.line(screen, Gray2, line, (line[0] - 0.43 * line[1], 0), 1)
             pygame.draw.line(screen, Gray2, line, (line[0] + 0.43 * line[1], 0), 1)
     all_sprites.draw(screen)
-    for i in range(len(units_list)):
-        if (len(units_list[i].sprites())) > 0:
-            screen.blit(score_text[i], (units_list[i].sprites()[0].rect.left, units_list[i].sprites()[0].rect.bottom - 30))
+    for i in range(len(dict_0.values())):
+        if (len(list(dict_0.values())[i].sprites())) > 0:
+            screen.blit(score_text[i], (list(dict_0.values())[i].sprites()[0].rect.left, list(dict_0.values())[i].sprites()[0].rect.bottom - 30))
+            screen.blit(number_text[i], (list(dict_0.values())[i].sprites()[0].rect.left, list(dict_0.values())[i].sprites()[-1].rect.bottom + 10))
     action_text = score_font.render(str(act_list), True, (White))
     p1_text = score_font.render(str(p1_count), True, (C1))
     p2_text = score_font.render(str(p2_count), True, (C2))
