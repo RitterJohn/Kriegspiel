@@ -1,8 +1,8 @@
 import psycopg2
 
-PGUSER = "postgres"
-PGPASSWORD = "123"
-ip = "localhost"
-DATABASE = "kriegspiel"
+PGUSER = "USERNAME"
+PGPASSWORD = "PASSWORD"
+ip = "IP"
+DATABASE = "DATABASE_NAME"
 
 conn = psycopg2.connect(host=ip, database = DATABASE, user = PGUSER, password=PGPASSWORD)
